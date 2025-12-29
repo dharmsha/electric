@@ -5,8 +5,31 @@ import ShopCard from '@/app/components/ShopCard';
 import LoadingSpinner from '@/app/components/LoadingSpinner';
 import { FiMapPin, FiCheckCircle, FiStar, FiFilter } from 'react-icons/fi';
 
-// Mock sellers/shops data
-const initialShops = [
+// Define the Shop interface
+interface Shop {
+  id: number;
+  name: string;
+  owner: string;
+  city: string;
+  location: string;
+  categories: string[];
+  rating: number;
+  totalReviews: number;
+  totalServices: number;
+  joined: string;
+  verification: 'pending' | 'verified';
+  services: string[];
+  products: string[];
+  availability: string;
+  openingHours: string;
+  homeService: boolean;
+  image: string;
+  description: string;
+  badges: string[];
+}
+
+// Mock sellers/shops data with proper typing
+const initialShops: Shop[] = [
   {
     id: 1,
     name: 'Gupta Electronics',
@@ -322,8 +345,8 @@ const initialShops = [
 ];
 
 export default function SellersPage() {
-  const [shops, setShops] = useState(initialShops);
-  const [filteredShops, setFilteredShops] = useState(initialShops);
+  const [shops, setShops] = useState<Shop[]>(initialShops);
+  const [filteredShops, setFilteredShops] = useState<Shop[]>(initialShops);
   const [loading, setLoading] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedCity, setSelectedCity] = useState('all');
@@ -398,7 +421,7 @@ export default function SellersPage() {
       setFilteredShops(filtered);
       setLoading(false);
     }, 300);
-  }, [searchQuery, selectedCity, selectedCategory, verificationFilter, homeServiceFilter, sortBy]);
+  }, [searchQuery, selectedCity, selectedCategory, verificationFilter, homeServiceFilter, sortBy, shops]);
 
   const handleSearch = (e: React.FormEvent) => {
     e.preventDefault();
