@@ -1,5 +1,6 @@
 // lib/auth.ts
-import { 
+// lib/auth.ts
+import {
   createUserWithEmailAndPassword,
   signInWithEmailAndPassword,
   signOut,
@@ -11,12 +12,20 @@ import {
   sendPasswordResetEmail,
   User as FirebaseUser
 } from "firebase/auth";
-import { auth } from "./firebase";
-import { doc, setDoc, getDoc, updateDoc } from "firebase/firestore";
-import { db } from "./firebase";
 
-// User types
-export type UserRole = 'customer' | 'shop_owner' | 'admin';
+import { doc, setDoc, getDoc, updateDoc } from "firebase/firestore";
+import { getFirebaseAuth, getFirebaseDB } from "./firebase";
+
+// हटा दें ये lines:
+// import { auth } from "./firebase";  // ❌ इसे हटाएं
+// import { db } from "./firebase";    // ❌ इसे हटाएं
+
+// बाकी code वैसा ही रहता है...
+/* =======================
+   TYPES
+======================= */
+
+export type UserRole = "customer" | "shop_owner" | "admin";
 
 export interface AppUser {
   uid: string;
@@ -28,75 +37,53 @@ export interface AppUser {
   createdAt: Date;
   updatedAt: Date;
   emailVerified: boolean;
-  
-  // Customer specific
+
   customerData?: {
-    addresses: CustomerAddress[];
+    addresses: any[];
     favoriteShops: string[];
     totalOrders: number;
   };
-  
-  // Shop owner specific
+
   shopData?: {
     shopId: string;
     shopName: string;
     gstNumber: string;
     businessType: string;
-    verificationStatus: 'pending' | 'verified' | 'rejected';
+    verificationStatus: "pending" | "verified" | "rejected";
     documents: string[];
   };
 }
 
-export interface CustomerAddress {
-  id: string;
-  addressLine1: string;
-  addressLine2?: string;
-  city: string;
-  state: string;
-  pincode: string;
-  landmark: string;
-  isDefault: boolean;
-  location: {
-    lat: number;
-    lng: number;
-  };
-}
+/* =======================
+   MOCK MODE
+======================= */
 
-// Mock data for development
-const mockUsers: Record<string, AppUser> = {
-  'mock-uid': {
-    uid: 'mock-uid',
-    email: 'admin@electrohub.com',
-    displayName: 'Admin User',
-    phoneNumber: '9876543210',
-    photoURL: 'https://ui-avatars.com/api/?name=Admin+User&background=random',
-    role: 'admin',
-    createdAt: new Date(),
-    updatedAt: new Date(),
-    emailVerified: true,
-  },
-  'mock-customer': {
-    uid: 'mock-customer',
-    email: 'customer@test.com',
-    displayName: 'Test Customer',
-    phoneNumber: '9876543211',
-    photoURL: 'https://ui-avatars.com/api/?name=Test+Customer&background=random',
-    role: 'customer',
-    createdAt: new Date(),
-    updatedAt: new Date(),
-    emailVerified: true,
-    customerData: {
-      addresses: [],
-      favoriteShops: [],
-      totalOrders: 0
-    }
-  }
+const isMockFirebase =
+  !process.env.NEXT_PUBLIC_FIREBASE_API_KEY &&
+  process.env.NODE_ENV === "development";
+
+const mockUsers: Record<string, AppUser> = {};
+
+/* =======================
+   HELPERS
+======================= */
+
+const getAuthOrThrow = () => {
+  const auth = getFirebaseAuth();
+  if (!auth) throw new Error("Firebase Auth not initialized");
+  return auth;
 };
 
-// Check if using mock Firebase
-const isMockFirebase = !process.env.NEXT_PUBLIC_FIREBASE_API_KEY && process.env.NODE_ENV === 'development';
+const getDBOrThrow = () => {
+  const db = getFirebaseDB();
+  if (!db) throw new Error("Firebase DB not initialized");
+  return db;
+};
 
-// Register new user
+/* =======================
+   REGISTER
+======================= */
+
 export const registerUser = async (
   email: string,
   password: string,
@@ -105,297 +92,166 @@ export const registerUser = async (
   role: UserRole,
   additionalData?: any
 ): Promise<AppUser> => {
-  try {
-    if (isMockFirebase) {
-      // Mock registration
-      const mockUser: AppUser = {
-        uid: `mock-${Date.now()}`,
-        email,
-        displayName,
-        phoneNumber,
-        photoURL: `https://ui-avatars.com/api/?name=${encodeURIComponent(displayName)}&background=random`,
-        role,
-        createdAt: new Date(),
-        updatedAt: new Date(),
-        emailVerified: false,
-      };
-      
-      if (role === 'customer') {
-        mockUser.customerData = {
-          addresses: [],
-          favoriteShops: [],
-          totalOrders: 0
-        };
-      } else if (role === 'shop_owner') {
-        mockUser.shopData = {
-          shopId: mockUser.uid,
-          shopName: additionalData?.shopName || displayName,
-          gstNumber: additionalData?.gstNumber || '',
-          businessType: additionalData?.businessType || '',
-          verificationStatus: 'pending',
-          documents: []
-        };
-      }
-      
-      mockUsers[mockUser.uid] = mockUser;
-      return mockUser;
-    }
-
-    // Real Firebase registration
-    const userCredential = await createUserWithEmailAndPassword(auth, email, password);
-    const user = userCredential.user;
-    
-    // Update profile
-    await updateProfile(user, {
-      displayName,
-      photoURL: `https://ui-avatars.com/api/?name=${encodeURIComponent(displayName)}&background=random`
-    });
-    
-    // Send email verification
-    await sendEmailVerification(user);
-    
-    // Create user document in Firestore
-    const userData: AppUser = {
-      uid: user.uid,
-      email: user.email!,
+  if (isMockFirebase) {
+    const user: AppUser = {
+      uid: `mock-${Date.now()}`,
+      email,
       displayName,
       phoneNumber,
-      photoURL: user.photoURL || '',
+      photoURL: "",
       role,
       createdAt: new Date(),
       updatedAt: new Date(),
-      emailVerified: false,
+      emailVerified: false
     };
-    
-    // Add role-specific data
-    if (role === 'customer') {
-      userData.customerData = {
-        addresses: [],
-        favoriteShops: [],
-        totalOrders: 0
-      };
-    } else if (role === 'shop_owner') {
-      userData.shopData = {
-        shopId: user.uid,
-        shopName: additionalData?.shopName || displayName,
-        gstNumber: additionalData?.gstNumber || '',
-        businessType: additionalData?.businessType || '',
-        verificationStatus: 'pending',
-        documents: []
-      };
-    }
-    
-    await setDoc(doc(db, 'users', user.uid), userData);
-    
-    return userData;
-  } catch (error: any) {
-    console.error('Registration error:', error);
-    throw new Error(error.message || 'Registration failed');
+    mockUsers[user.uid] = user;
+    return user;
   }
+
+  const auth = getAuthOrThrow();
+  const db = getDBOrThrow();
+
+  const cred = await createUserWithEmailAndPassword(auth, email, password);
+  const user = cred.user;
+
+  await updateProfile(user, { displayName });
+  await sendEmailVerification(user);
+
+  const userData: AppUser = {
+    uid: user.uid,
+    email: user.email!,
+    displayName,
+    phoneNumber,
+    photoURL: user.photoURL || "",
+    role,
+    createdAt: new Date(),
+    updatedAt: new Date(),
+    emailVerified: false
+  };
+
+  await setDoc(doc(db, "users", user.uid), userData);
+  return userData;
 };
 
-// Login user
-export const loginUser = async (email: string, password: string): Promise<AppUser> => {
-  try {
-    if (isMockFirebase) {
-      // Mock login for development
-      if (email === 'admin@electrohub.com' && password === 'admin123') {
-        return mockUsers['mock-uid'];
-      }
-      if (email === 'customer@test.com' && password === 'password') {
-        return mockUsers['mock-customer'];
-      }
-      throw new Error('Invalid credentials');
-    }
+/* =======================
+   LOGIN
+======================= */
 
-    // Real Firebase login
-    const userCredential = await signInWithEmailAndPassword(auth, email, password);
-    const user = userCredential.user;
-    
-    // Get user data from Firestore
-    const userDoc = await getDoc(doc(db, 'users', user.uid));
-    
-    if (!userDoc.exists()) {
-      throw new Error('User data not found');
-    }
-    
-    return userDoc.data() as AppUser;
-  } catch (error: any) {
-    console.error('Login error:', error);
-    throw new Error(error.message || 'Login failed');
-  }
-};
-
-// Google Sign In
-export const signInWithGoogle = async (role: UserRole): Promise<AppUser> => {
-  try {
-    if (isMockFirebase) {
-      // Mock Google sign in
-      const mockUser: AppUser = {
-        uid: `google-mock-${Date.now()}`,
-        email: 'google-user@test.com',
-        displayName: 'Google User',
-        phoneNumber: '',
-        photoURL: 'https://ui-avatars.com/api/?name=Google+User&background=random',
-        role,
-        createdAt: new Date(),
-        updatedAt: new Date(),
-        emailVerified: true,
-      };
-      
-      if (role === 'customer') {
-        mockUser.customerData = {
-          addresses: [],
-          favoriteShops: [],
-          totalOrders: 0
-        };
-      }
-      
-      mockUsers[mockUser.uid] = mockUser;
-      return mockUser;
-    }
-
-    const provider = new GoogleAuthProvider();
-    const userCredential = await signInWithPopup(auth, provider);
-    const user = userCredential.user;
-    
-    // Check if user exists in Firestore
-    const userDoc = await getDoc(doc(db, 'users', user.uid));
-    
-    if (!userDoc.exists()) {
-      // Create new user document
-      const userData: AppUser = {
-        uid: user.uid,
-        email: user.email!,
-        displayName: user.displayName || 'User',
-        phoneNumber: user.phoneNumber || '',
-        photoURL: user.photoURL || '',
-        role,
-        createdAt: new Date(),
-        updatedAt: new Date(),
-        emailVerified: user.emailVerified,
-      };
-      
-      if (role === 'customer') {
-        userData.customerData = {
-          addresses: [],
-          favoriteShops: [],
-          totalOrders: 0
-        };
-      }
-      
-      await setDoc(doc(db, 'users', user.uid), userData);
-      return userData;
-    }
-    
-    return userDoc.data() as AppUser;
-  } catch (error: any) {
-    console.error('Google sign in error:', error);
-    throw new Error(error.message || 'Google sign in failed');
-  }
-};
-
-// Logout
-export const logoutUser = async (): Promise<void> => {
-  try {
-    if (isMockFirebase) {
-      console.log('Mock logout');
-      return;
-    }
-    await signOut(auth);
-  } catch (error: any) {
-    console.error('Logout error:', error);
-    throw new Error(error.message || 'Logout failed');
-  }
-};
-
-// Auth state listener
-export const onAuthStateChange = (callback: (user: AppUser | null) => void) => {
+export const loginUser = async (
+  email: string,
+  password: string
+): Promise<AppUser> => {
   if (isMockFirebase) {
-    // Mock auth state - return null for now
+    throw new Error("Mock login not implemented");
+  }
+
+  const auth = getAuthOrThrow();
+  const db = getDBOrThrow();
+
+  const cred = await signInWithEmailAndPassword(auth, email, password);
+  const snap = await getDoc(doc(db, "users", cred.user.uid));
+
+  if (!snap.exists()) throw new Error("User not found");
+  return snap.data() as AppUser;
+};
+
+/* =======================
+   GOOGLE LOGIN
+======================= */
+
+export const signInWithGoogle = async (
+  role: UserRole
+): Promise<AppUser> => {
+  const auth = getAuthOrThrow();
+  const db = getDBOrThrow();
+
+  const provider = new GoogleAuthProvider();
+  const cred = await signInWithPopup(auth, provider);
+  const user = cred.user;
+
+  const ref = doc(db, "users", user.uid);
+  const snap = await getDoc(ref);
+
+  if (snap.exists()) return snap.data() as AppUser;
+
+  const newUser: AppUser = {
+    uid: user.uid,
+    email: user.email!,
+    displayName: user.displayName || "",
+    phoneNumber: "",
+    photoURL: user.photoURL || "",
+    role,
+    createdAt: new Date(),
+    updatedAt: new Date(),
+    emailVerified: user.emailVerified
+  };
+
+  await setDoc(ref, newUser);
+  return newUser;
+};
+
+/* =======================
+   LOGOUT
+======================= */
+
+export const logoutUser = async (): Promise<void> => {
+  const auth = getAuthOrThrow();
+  await signOut(auth);
+};
+
+/* =======================
+   AUTH STATE
+======================= */
+
+export const onAuthStateChange = (
+  callback: (user: AppUser | null) => void
+) => {
+  const auth = getFirebaseAuth();
+  const db = getFirebaseDB();
+
+  if (!auth || !db) {
     callback(null);
-    return () => {}; // Return cleanup function
+    return () => {};
   }
 
   return onAuthStateChanged(auth, async (firebaseUser) => {
-    if (firebaseUser) {
-      try {
-        const userDoc = await getDoc(doc(db, 'users', firebaseUser.uid));
-        if (userDoc.exists()) {
-          callback(userDoc.data() as AppUser);
-        } else {
-          callback(null);
-        }
-      } catch (error) {
-        console.error('Auth state error:', error);
-        callback(null);
-      }
-    } else {
+    if (!firebaseUser) {
       callback(null);
+      return;
     }
+
+    const snap = await getDoc(doc(db, "users", firebaseUser.uid));
+    callback(snap.exists() ? (snap.data() as AppUser) : null);
   });
 };
 
-// Reset password
+/* =======================
+   RESET PASSWORD
+======================= */
+
 export const resetPassword = async (email: string): Promise<void> => {
-  try {
-    if (isMockFirebase) {
-      console.log(`Mock password reset email sent to ${email}`);
-      return;
-    }
-    await sendPasswordResetEmail(auth, email);
-  } catch (error: any) {
-    console.error('Password reset error:', error);
-    throw new Error(error.message || 'Password reset failed');
-  }
+  const auth = getAuthOrThrow();
+  await sendPasswordResetEmail(auth, email);
 };
 
-// Update user profile
-export const updateUserProfile = async (uid: string, data: Partial<AppUser>): Promise<void> => {
-  try {
-    if (isMockFirebase) {
-      console.log(`Mock update profile for ${uid}:`, data);
-      if (mockUsers[uid]) {
-        mockUsers[uid] = { ...mockUsers[uid], ...data, updatedAt: new Date() };
-      }
-      return;
-    }
-    
-    await updateDoc(doc(db, 'users', uid), {
-      ...data,
-      updatedAt: new Date()
-    });
-  } catch (error: any) {
-    console.error('Update profile error:', error);
-    throw new Error(error.message || 'Update profile failed');
-  }
+/* =======================
+   UPDATE PROFILE
+======================= */
+
+export const updateUserProfile = async (
+  uid: string,
+  data: Partial<AppUser>
+): Promise<void> => {
+  const db = getDBOrThrow();
+  await updateDoc(doc(db, "users", uid), {
+    ...data,
+    updatedAt: new Date()
+  });
 };
 
-// Get current user
-export const getCurrentUser = (): AppUser | null => {
-  if (isMockFirebase) {
-    return null; // Mock implementation
-  }
-  
-  const firebaseUser = auth.currentUser;
-  if (!firebaseUser) return null;
-  
-  // Note: This won't have Firestore data, just Firebase Auth data
-  // For complete user data, use onAuthStateChange
-  return {
-    uid: firebaseUser.uid,
-    email: firebaseUser.email || '',
-    displayName: firebaseUser.displayName || '',
-    phoneNumber: firebaseUser.phoneNumber || '',
-    photoURL: firebaseUser.photoURL || '',
-    role: 'customer', // Default role
-    createdAt: new Date(firebaseUser.metadata.creationTime || Date.now()),
-    updatedAt: new Date(),
-    emailVerified: firebaseUser.emailVerified,
-  };
-};
+/* =======================
+   ADMIN CHECK
+======================= */
 
-// Check if user is admin
-export const isAdmin = (user: AppUser | null): boolean => {
-  return user?.role === 'admin';
-};
+export const isAdmin = (user: AppUser | null): boolean =>
+  user?.role === "admin";
