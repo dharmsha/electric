@@ -1,5 +1,3 @@
-// lib/auth.ts
-// lib/auth.ts
 import {
   createUserWithEmailAndPassword,
   signInWithEmailAndPassword,
@@ -16,11 +14,6 @@ import {
 import { doc, setDoc, getDoc, updateDoc } from "firebase/firestore";
 import { getFirebaseAuth, getFirebaseDB } from "./firebase";
 
-// हटा दें ये lines:
-// import { auth } from "./firebase";  // ❌ इसे हटाएं
-// import { db } from "./firebase";    // ❌ इसे हटाएं
-
-// बाकी code वैसा ही रहता है...
 /* =======================
    TYPES
 ======================= */
@@ -102,7 +95,25 @@ export const registerUser = async (
       role,
       createdAt: new Date(),
       updatedAt: new Date(),
-      emailVerified: false
+      emailVerified: false,
+      ...(role === "customer" ? {
+        customerData: {
+          addresses: [],
+          favoriteShops: [],
+          totalOrders: 0
+        }
+      } : {}),
+      ...(role === "shop_owner" ? {
+        shopData: {
+          shopId: `shop-${Date.now()}`,
+          shopName: "",
+          gstNumber: "",
+          businessType: "",
+          verificationStatus: "pending",
+          documents: []
+        }
+      } : {}),
+      ...additionalData
     };
     mockUsers[user.uid] = user;
     return user;
@@ -126,7 +137,25 @@ export const registerUser = async (
     role,
     createdAt: new Date(),
     updatedAt: new Date(),
-    emailVerified: false
+    emailVerified: false,
+    ...(role === "customer" ? {
+      customerData: {
+        addresses: [],
+        favoriteShops: [],
+        totalOrders: 0
+      }
+    } : {}),
+    ...(role === "shop_owner" ? {
+      shopData: {
+        shopId: `shop-${user.uid}`,
+        shopName: "",
+        gstNumber: "",
+        businessType: "",
+        verificationStatus: "pending",
+        documents: []
+      }
+    } : {}),
+    ...additionalData
   };
 
   await setDoc(doc(db, "users", user.uid), userData);
@@ -142,7 +171,9 @@ export const loginUser = async (
   password: string
 ): Promise<AppUser> => {
   if (isMockFirebase) {
-    throw new Error("Mock login not implemented");
+    const mockUser = Object.values(mockUsers).find(u => u.email === email);
+    if (mockUser) return mockUser;
+    throw new Error("Invalid credentials");
   }
 
   const auth = getAuthOrThrow();
@@ -162,6 +193,22 @@ export const loginUser = async (
 export const signInWithGoogle = async (
   role: UserRole
 ): Promise<AppUser> => {
+  if (isMockFirebase) {
+    const mockUser: AppUser = {
+      uid: `google-mock-${Date.now()}`,
+      email: `mock${Date.now()}@gmail.com`,
+      displayName: "Mock User",
+      phoneNumber: "",
+      photoURL: "",
+      role,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+      emailVerified: true
+    };
+    mockUsers[mockUser.uid] = mockUser;
+    return mockUser;
+  }
+
   const auth = getAuthOrThrow();
   const db = getDBOrThrow();
 
@@ -183,7 +230,24 @@ export const signInWithGoogle = async (
     role,
     createdAt: new Date(),
     updatedAt: new Date(),
-    emailVerified: user.emailVerified
+    emailVerified: user.emailVerified,
+    ...(role === "customer" ? {
+      customerData: {
+        addresses: [],
+        favoriteShops: [],
+        totalOrders: 0
+      }
+    } : {}),
+    ...(role === "shop_owner" ? {
+      shopData: {
+        shopId: `shop-${user.uid}`,
+        shopName: "",
+        gstNumber: "",
+        businessType: "",
+        verificationStatus: "pending",
+        documents: []
+      }
+    } : {})
   };
 
   await setDoc(ref, newUser);
@@ -195,6 +259,10 @@ export const signInWithGoogle = async (
 ======================= */
 
 export const logoutUser = async (): Promise<void> => {
+  if (isMockFirebase) {
+    return;
+  }
+
   const auth = getAuthOrThrow();
   await signOut(auth);
 };
@@ -209,6 +277,13 @@ export const onAuthStateChange = (
   const auth = getFirebaseAuth();
   const db = getFirebaseDB();
 
+  if (isMockFirebase) {
+    // Mock implementation
+    const mockUser = Object.values(mockUsers)[0] || null;
+    callback(mockUser);
+    return () => {};
+  }
+
   if (!auth || !db) {
     callback(null);
     return () => {};
@@ -220,8 +295,13 @@ export const onAuthStateChange = (
       return;
     }
 
-    const snap = await getDoc(doc(db, "users", firebaseUser.uid));
-    callback(snap.exists() ? (snap.data() as AppUser) : null);
+    try {
+      const snap = await getDoc(doc(db, "users", firebaseUser.uid));
+      callback(snap.exists() ? (snap.data() as AppUser) : null);
+    } catch (error) {
+      console.error("Error fetching user data:", error);
+      callback(null);
+    }
   });
 };
 
@@ -230,6 +310,11 @@ export const onAuthStateChange = (
 ======================= */
 
 export const resetPassword = async (email: string): Promise<void> => {
+  if (isMockFirebase) {
+    console.log(`Password reset email sent to: ${email} (mock)`);
+    return;
+  }
+
   const auth = getAuthOrThrow();
   await sendPasswordResetEmail(auth, email);
 };
@@ -242,6 +327,17 @@ export const updateUserProfile = async (
   uid: string,
   data: Partial<AppUser>
 ): Promise<void> => {
+  if (isMockFirebase) {
+    if (mockUsers[uid]) {
+      mockUsers[uid] = {
+        ...mockUsers[uid],
+        ...data,
+        updatedAt: new Date()
+      };
+    }
+    return;
+  }
+
   const db = getDBOrThrow();
   await updateDoc(doc(db, "users", uid), {
     ...data,
@@ -250,8 +346,57 @@ export const updateUserProfile = async (
 };
 
 /* =======================
+   GET CURRENT USER
+======================= */
+
+export const getCurrentUser = async (): Promise<AppUser | null> => {
+  if (isMockFirebase) {
+    return Object.values(mockUsers)[0] || null;
+  }
+
+  const auth = getFirebaseAuth();
+  const db = getFirebaseDB();
+  
+  if (!auth || !db) return null;
+  
+  const user = auth.currentUser;
+  if (!user) return null;
+  
+  const snap = await getDoc(doc(db, "users", user.uid));
+  return snap.exists() ? (snap.data() as AppUser) : null;
+};
+
+/* =======================
    ADMIN CHECK
 ======================= */
 
 export const isAdmin = (user: AppUser | null): boolean =>
   user?.role === "admin";
+
+/* =======================
+   CUSTOMER CHECK
+======================= */
+
+export const isCustomer = (user: AppUser | null): boolean =>
+  user?.role === "customer";
+
+/* =======================
+   SHOP OWNER CHECK
+======================= */
+
+export const isShopOwner = (user: AppUser | null): boolean =>
+  user?.role === "shop_owner";
+
+/* =======================
+   GET USER BY ID
+======================= */
+
+export const getUserById = async (uid: string): Promise<AppUser | null> => {
+  if (isMockFirebase) {
+    return mockUsers[uid] || null;
+  }
+
+  const db = getDBOrThrow();
+  const snap = await getDoc(doc(db, "users", uid));
+  return snap.exists() ? (snap.data() as AppUser) : null;
+};
